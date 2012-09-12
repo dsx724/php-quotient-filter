@@ -82,11 +82,24 @@ class QuotientFilter implements iAMQ {
 		for ($i = 0; $i < strlen($bf->bit_array); $i++) $bf->bit_array[$i] = chr(ord($bf1->bit_array[$i]) & ord($bf2->bit_array[$i]));
 		return $bf;
 	}
-	private $n = 0; // # of entries
-	private $m; // # of bits in array
-	private $k; // # of hash functions
+	
+	
+	
+	
+	// p bit fingerprint of elements
+	// q msbs - stores remainders in sorted order
+	// r lsbs - stored in the bucket indexed by q (quotient)
+	// run - remainders with the same quotient stored continuously
+	// cluster - a maximal sequence of slots whose first element is in the canonical slot - contain 1 or more run
+	// is_occupied - canonical slot
+	// is_continuation -  part of run
+	// is_shifted - remainder not in canonical slot
+	private $n = 0;
+	private $p;
+	private $q;
+	private $r;
 	private $hash;
-	private $mask;
+	
 	private $m_chunk_size;
 	private $bit_array;
 	public function __construct($m, $k, $h='md5'){
