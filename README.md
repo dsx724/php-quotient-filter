@@ -3,6 +3,8 @@ This is a proper quotient implementation in PHP.  I could not find any open-sour
 Like the bloom filter, a quotient filter is a probabilistic data structure that trades of 
 It uses a binary string to store the bit vector and manipulates based on byte indexes of the string.
 
+###NOT COMPLETE - IGNORE BELOW THIS LINE!
+
 ###Performance
 On a 3.8GHz Sandy Bridge system, the single threaded lookup/insert throughput is 150K elements / second with k = 7.
 
