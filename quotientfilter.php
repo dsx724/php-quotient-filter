@@ -50,18 +50,11 @@ interface iAMQ {
 	public function contains($key);
 }
 
-
 class QuotientFilter implements iAMQ {
-	const OPTIMIZE_FOR_MEMORY = 1; // smallest m
-	const OPTIMIZE_FOR_HASHES = 2; // smallest k
 	public static function createFromProbability($n, $p, $method = 0){
 		if ($p <= 0 || $p >= 1) throw new Exception('Invalid false positive rate requested.');
-		if ($method){
-			//TODO target optimizations
-		} else {
-			$k = floor(log(1/$p,2));
-			$m = pow(2,ceil(log(-$n*log($p)/pow(log(2),2),2))); //approximate estimator method
-		}
+		$k = floor(log(1/$p,2));
+		$m = pow(2,ceil(log(-$n*log($p)/pow(log(2),2),2))); //approximate estimator method
 		return new BloomFilter($m,$k);
 	}
 	public static function getUnion($bf1,$bf2){
@@ -83,96 +76,94 @@ class QuotientFilter implements iAMQ {
 		return $bf;
 	}
 	
-	
-	
-	
-	// p bit fingerprint of elements
-	// q msbs - stores remainders in sorted order
-	// r lsbs - stored in the bucket indexed by q (quotient)
 	// run - remainders with the same quotient stored continuously
 	// cluster - a maximal sequence of slots whose first element is in the canonical slot - contain 1 or more run
 	// is_occupied - canonical slot
 	// is_continuation -  part of run
 	// is_shifted - remainder not in canonical slot
-	private $n = 0;
-	private $p;
-	private $q;
-	private $r;
-	private $hash;
 	
-	private $m_chunk_size;
+	private $n = 0;
+	private $q; // # of bits in slot addressing
+	private $r; // # of bits to store in slot (add 3 bits to get slot size)
+	private $slots; // 2 ^ q
+	private $slot_size; // 2 ^ (r + 3)
+	private $m;
+	private $hash;
+	private $chunk_size;
 	private $bit_array;
-	public function __construct($m, $k, $h='md5'){
-		if ($m < 8) throw new Exception('For practical applications, we restrict the bit array length to at least 8 bits.');
-		if ($m & ($m - 1) == 0) throw new Exception('The bit array must be power of 2.');
-		if ($m > 17179869183) throw new Exception('The maximum filter size is 1GB');
-		$this->m = $m; //number of bits
-		$this->k = $k;
+	
+	public function __construct($p, $q, $h='md5'){
+		$this->slots = 2 << ($this->q = $q);
+		$this->slot_size = ($this->r = $p - $q) + 3;
+		$this->m = $this->slots * $this->slot_size;
+		if ($p - $q <= 0) throw new Exception('The fingerprint is too small to support the number of slots.');
+		if ($q < 3) throw new Exception('The number of slots must be at least 8.');
+		if ($this->m > 17179869183) throw new Exception('The maximum data structure size is 1GB.');
 		$this->hash = $h;
-		$address_bits = (int)log($m,2);
-		$this->mask =(1 << $address_bits) - 1;
-		$this->m_chunk_size = ceil($address_bits / 8);
-		$this->bit_array = (binary)(str_repeat("\0",($this->m >> 3)));
+		$this->chunk_size = ceil($p / 8);
+		$this->bit_array = (binary)(str_repeat("\0",$this->m >> 3));
 	}
 	public function calculateProbability($n = 0){
-		return pow(1-pow(1-1/$this->m,$this->k*($n ?: $this->n)),$this->k);
-		// return pow(1-exp($this->k*($n ?: $this->n)/$this->m),$this->k); //approximate estimator
+		return 1 - exp(-($n ?: $this->n)/($this->slots * (2 << $this->r)));
 	}
 	public function calculateCapacity($p){
-		return floor($this->m*log(2)/log($p,1-pow(1-1/$this->m,$this->m*log(2))));
+		return floor(-log(1 - $p) * $this->slots * (2 << $this->r));
 	}
 	public function getElementCount(){
 		return $this->n;
 	}
-	public function getArraySize(){
-		return $this->m;
+	public function getSlotCount(){
+		return $this->slots;
 	}
-	public function getHashCount(){
-		return $this->k;
+	public function getSlotSize(){
+		return $this->slot_size;
+	}
+	public function getArraySize($bytes = false){
+		return $this->m >> ($bytes ? 3 : 0);
+	}
+	public function getLoadFactor(){
+		return $this->n / $this->slots;
 	}
 	public function getInfo($p = null){
 		$units = array('','K','M','G','T','P','E','Z','Y');
-		$M = $this->m >> 3;
+		$M = $this->getArraySize(true);
 		$magnitude = floor(log($M,1024));
 		$unit = $units[$magnitude];
 		$M /= pow(1024,$magnitude);
-		return 'Allocated m: '.$this->m.' bits ('.$M.' '.$unit.'Bytes)'.PHP_EOL.
-		'Allocated k: '.$this->k.PHP_EOL.
-		'Load n: '.$this->n.PHP_EOL.
-		(isset($p) ? 'Capacity ('.$p.'): '.number_format($this->calculateCapacity($p)).PHP_EOL : '');
+		return 'Allocated '.$this->getArraySize().' bits ('.$M.' '.$unit.'Bytes)'.PHP_EOL.
+			'Allocated '.$this->getSlotCount(). ' slots of '.$this->getSlotSize().' bits'.PHP_EOL.
+			'Contains '.$this->getElementCount().' elements (a='.$this->getLoadFactor().')'.PHP_EOL.
+			(isset($p) ? 'Capacity of '.number_format($this->calculateCapacity($p)).' (p='.$p.')'.PHP_EOL : '');
 	}
 	public function add($key){
 		$hash = hash($this->hash,$key,true);
 		while ($this->m_chunk_size * $this->k > strlen($hash)) $hash .= hash($this->hash,$key,true);
-		for ($index = 0; $index < $this->k; $index++){
-			$hash_sub = hexdec(unpack('H*',substr($hash,$index*$this->m_chunk_size,$this->m_chunk_size))[1]) & $this->mask;
-			$word = $hash_sub >> 3;
-			$this->bit_array[$word] = chr(ord($this->bit_array[$word]) | 1 << ($hash_sub % 8));
-		}
+		
 		$this->n++;
 	}
 	public function contains($key){
 		$hash = hash($this->hash,$key,true);
 		while ($this->m_chunk_size * $this->k > strlen($hash)) $hash .= hash($this->hash,$key,true);
-		for ($index = 0; $index < $this->k; $index++){
-			$hash_sub = hexdec(unpack('H*',substr($hash,$index*$this->m_chunk_size,$this->m_chunk_size))[1]) & $this->mask;
-			if (!(ord($this->bit_array[$hash_sub >> 3]) & (1 << ($hash_sub % 8)))) return false;
-		}
+		
 		return true;
 	}
 	public function unionWith($bf){
 		if ($this->m != $bf->m) throw new Exception('Unable to merge due to vector difference.');
 		if ($this->k != $bf->k) throw new Exception('Unable to merge due to hash count difference.');
 		if ($this->hash != $bf->hash) throw new Exception('Unable to merge due to hash difference.');
-		$this->n += $bf->n;
-		for ($i = 0; $i < strlen($this->bit_array); $i++) $this->bit_array[$i] = chr(ord($this->bit_array[$i]) | ord($bf->bit_array[$i]));
+		
 	}
 	public function intersectWith($bf){
 		if ($this->m != $bf->m) throw new Exception('Unable to merge due to vector difference.');
 		if ($this->k != $bf->k) throw new Exception('Unable to merge due to hash count difference.');
 		if ($this->hash != $bf->hash) throw new Exception('Unable to merge due to hash difference.');
-		$this->n = abs($this->n - $bf->n);
-		for ($i = 0; $i < strlen($this->bit_array); $i++) $this->bit_array[$i] = chr(ord($this->bit_array[$i]) & ord($bf->bit_array[$i]));
+		
+	}
+	public function grow(){
+		
+	}
+	public function shrink(){
+		
 	}
 }
 ?>

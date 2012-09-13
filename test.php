@@ -6,6 +6,21 @@ $config = parse_ini_file('test.ini',true);
 
 foreach ($config['php'] as $key => $value) ini_set($key,$value);
 foreach ($config['test']['include'] as $include) require_once $include;
+
+echo '<pre>';
+
+$qf = new QuotientFilter(34,29);
+echo $qf->getArraySize(true).PHP_EOL;
+echo $qf->getArraySize(false).PHP_EOL;
+echo $qf->getSlotCount().PHP_EOL;
+echo $qf->getSlotSize().PHP_EOL;
+echo $qf->calculateProbability(2634).PHP_EOL;
+echo $qf->calculateCapacity(0.01).PHP_EOL;
+echo $qf->getLoadFactor().PHP_EOL;
+echo $qf->getInfo(0.01);
+echo '</pre>';
+
+die();
 ?>
 <form action="" method="POST">
 <input type="submit" name="bench" value=""/>
