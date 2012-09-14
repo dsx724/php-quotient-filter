@@ -40,7 +40,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // is_continuation -  part of run
 // is_shifted - remainder not in canonical slot
 
-// m_chunk_size
 // a = n/m - load factor
 // m = 2^q - number of slots
 // 1 - e^(-a/2^r) <= 2^-r
@@ -51,12 +50,13 @@ interface iAMQ {
 }
 
 class QuotientFilter implements iAMQ {
-	public static function createFromProbability($n, $p, $method = 0){
-		if ($p <= 0 || $p >= 1) throw new Exception('Invalid false positive rate requested.');
-		$k = floor(log(1/$p,2));
-		$m = pow(2,ceil(log(-$n*log($p)/pow(log(2),2),2))); //approximate estimator method
-		return new BloomFilter($m,$k);
+	public static function createFromProbability($n, $prob, $expansion_bits){
+		if ($prob <= 0 || $prob >= 1) throw new Exception('Invalid false positive rate requested.');
+		if ($n <= 0) throw new Exception('Invalid capacity requested.');
+		
+		return new self($p,$q);
 	}
+	/*
 	public static function getUnion($bf1,$bf2){
 		if ($bf1->m != $bf2->m) throw new Exception('Unable to merge due to vector difference.');
 		if ($bf1->k != $bf2->k) throw new Exception('Unable to merge due to hash count difference.');
@@ -75,7 +75,7 @@ class QuotientFilter implements iAMQ {
 		for ($i = 0; $i < strlen($bf->bit_array); $i++) $bf->bit_array[$i] = chr(ord($bf1->bit_array[$i]) & ord($bf2->bit_array[$i]));
 		return $bf;
 	}
-	
+	*/
 	// run - remainders with the same quotient stored continuously
 	// cluster - a maximal sequence of slots whose first element is in the canonical slot - contain 1 or more run
 	// is_occupied - canonical slot
@@ -137,16 +137,18 @@ class QuotientFilter implements iAMQ {
 	}
 	public function add($key){
 		$hash = hash($this->hash,$key,true);
-		while ($this->m_chunk_size * $this->k > strlen($hash)) $hash .= hash($this->hash,$key,true);
+		while ($this->chunk_size > strlen($hash)) $hash .= hash($this->hash,$hash,true);
 		
 		$this->n++;
 	}
 	public function contains($key){
 		$hash = hash($this->hash,$key,true);
-		while ($this->m_chunk_size * $this->k > strlen($hash)) $hash .= hash($this->hash,$key,true);
+		while ($this->chunk_size > strlen($hash)) $hash .= hash($this->hash,$hash,true);
 		
 		return true;
 	}
+	
+	/*
 	public function unionWith($bf){
 		if ($this->m != $bf->m) throw new Exception('Unable to merge due to vector difference.');
 		if ($this->k != $bf->k) throw new Exception('Unable to merge due to hash count difference.');
@@ -159,6 +161,7 @@ class QuotientFilter implements iAMQ {
 		if ($this->hash != $bf->hash) throw new Exception('Unable to merge due to hash difference.');
 		
 	}
+	*/
 	public function grow(){
 		
 	}
