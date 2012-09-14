@@ -50,32 +50,13 @@ interface iAMQ {
 }
 
 class QuotientFilter implements iAMQ {
-	public static function createFromProbability($n, $prob, $expansion_bits){
+	public static function createFromProbability($n, $prob, $extra_bits = 0){
 		if ($prob <= 0 || $prob >= 1) throw new Exception('Invalid false positive rate requested.');
 		if ($n <= 0) throw new Exception('Invalid capacity requested.');
 		
+		
 		return new self($p,$q);
 	}
-	/*
-	public static function getUnion($bf1,$bf2){
-		if ($bf1->m != $bf2->m) throw new Exception('Unable to merge due to vector difference.');
-		if ($bf1->k != $bf2->k) throw new Exception('Unable to merge due to hash count difference.');
-		if ($bf1->hash != $bf2->hash) throw new Exception('Unable to merge due to hash difference.');
-		$bf = new BloomFilter($bf1->m,$bf1->k,$bf1->hash);
-		$bf->n = $bf1->n + $bf2->n;
-		for ($i = 0; $i < strlen($bf->bit_array); $i++) $bf->bit_array[$i] = chr(ord($bf1->bit_array[$i]) | ord($bf2->bit_array[$i]));
-		return $bf;
-	}
-	public static function getIntersection($bf1,$bf2){
-		if ($bf1->m != $bf2->m) throw new Exception('Unable to merge due to vector difference.');
-		if ($bf1->k != $bf2->k) throw new Exception('Unable to merge due to hash count difference.');
-		if ($bf1->hash != $bf2->hash) throw new Exception('Unable to merge due to hash difference.');
-		$bf = new BloomFilter($bf1->m,$bf1->k,$bf1->hash);
-		$bf->n = abs($bf1->n - $bf2->n);
-		for ($i = 0; $i < strlen($bf->bit_array); $i++) $bf->bit_array[$i] = chr(ord($bf1->bit_array[$i]) & ord($bf2->bit_array[$i]));
-		return $bf;
-	}
-	*/
 	// run - remainders with the same quotient stored continuously
 	// cluster - a maximal sequence of slots whose first element is in the canonical slot - contain 1 or more run
 	// is_occupied - canonical slot
@@ -87,7 +68,7 @@ class QuotientFilter implements iAMQ {
 	private $r; // # of bits to store in slot (add 3 bits to get slot size)
 	private $slots; // 2 ^ q
 	private $slot_size; // 2 ^ (r + 3)
-	private $m;
+	private $m; // memory size of bit array in bits
 	private $hash;
 	private $chunk_size;
 	private $bit_array;
@@ -147,25 +128,30 @@ class QuotientFilter implements iAMQ {
 		
 		return true;
 	}
-	
-	/*
-	public function unionWith($bf){
-		if ($this->m != $bf->m) throw new Exception('Unable to merge due to vector difference.');
-		if ($this->k != $bf->k) throw new Exception('Unable to merge due to hash count difference.');
-		if ($this->hash != $bf->hash) throw new Exception('Unable to merge due to hash difference.');
+	private function getSlot($i){
+		$start = $this->slot_size * $i;
+		$start_word = $start >> 3;
+		$end = $this->slot_size * ($i + 1) - 1;
+		$end_word = $end >> 3;
+		$slot = substr($this->bit_array,$start_word,$end_word - $start_word + 1);
+		$t = 0;
+		for ($i = 0; $i < strlen($slot); $i++){
+			$t = ($t << 8) | ord($slot[$i]);
+			var_dump(ord($slot[$i]),$t,decbin($t));
+		}
+		return $slot;
+	}
+	public function test(){
+		for ($i = 0; $i < 100; $i++) $this->bit_array[$i] = $i % 10;
+		echo $this->getSlot(0);
+	}
+	private function setSlot($i,$r){
 		
 	}
-	public function intersectWith($bf){
-		if ($this->m != $bf->m) throw new Exception('Unable to merge due to vector difference.');
-		if ($this->k != $bf->k) throw new Exception('Unable to merge due to hash count difference.');
-		if ($this->hash != $bf->hash) throw new Exception('Unable to merge due to hash difference.');
+	public function grow($bits = 1){
 		
 	}
-	*/
-	public function grow(){
-		
-	}
-	public function shrink(){
+	public function shrink($bits = 1){
 		
 	}
 }

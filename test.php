@@ -9,7 +9,7 @@ foreach ($config['test']['include'] as $include) require_once $include;
 
 echo '<pre>';
 
-$qf = new QuotientFilter(34,29);
+$qf = new QuotientFilter(39,9);
 echo number_format($qf->getArraySize(true)).PHP_EOL;
 echo number_format($qf->getArraySize(false)).PHP_EOL;
 echo number_format($qf->getSlotCount()).PHP_EOL;
@@ -17,7 +17,8 @@ echo $qf->getSlotSize().PHP_EOL;
 echo $qf->calculateProbability(2634).PHP_EOL;
 echo number_format($qf->calculateCapacity(0.01)).PHP_EOL;
 echo $qf->getLoadFactor().PHP_EOL;
-echo $qf->getInfo(0.01);
+echo $qf->getInfo(0.01).PHP_EOL;
+echo $qf->test();
 echo '</pre>';
 
 die();
