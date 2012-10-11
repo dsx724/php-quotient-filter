@@ -67,8 +67,8 @@ class QuotientFilter implements iAMQ {
 	private $q; // # of bits in slot addressing
 	private $r; // # of bits to store in slot (add 3 bits to get slot size)
 	private $slots; // 2 ^ q
-	private $slot_size; // 2 ^ (r + 3)
-	private $m; // memory size of bit array in bits
+	private $slot_size; // r + 3
+	private $m; // memory size of bit array in bits (slots * slot_size)
 	private $hash;
 	private $chunk_size;
 	private $bit_array;
@@ -84,8 +84,10 @@ class QuotientFilter implements iAMQ {
 		$this->chunk_size = ceil($p / 8);
 		$this->bit_array = (binary)(str_repeat("\0",$this->m >> 3));
 	}
+	//// 1 - e^(-a/2^r) <= 2^-r
 	public function calculateProbability($n = 0){
-		return 1 - exp(-($n ?: $this->n)/($this->slots * (2 << $this->r)));
+		if (isset($n) && $n > $this->slots) throw new Exception('The data structure is not large enough to support the number of elements.');
+		return 1 - exp(-($n ?: $this->n)/($this->slots * (1 << $this->r)));
 	}
 	public function calculateCapacity($p){
 		return floor(-log(1 - $p) * $this->slots * (2 << $this->r));

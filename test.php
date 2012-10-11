@@ -9,14 +9,14 @@ foreach ($config['test']['include'] as $include) require_once $include;
 
 echo '<pre>';
 
-$qf = new QuotientFilter(39,9);
-echo number_format($qf->getArraySize(true)).PHP_EOL;
-echo number_format($qf->getArraySize(false)).PHP_EOL;
-echo number_format($qf->getSlotCount()).PHP_EOL;
-echo $qf->getSlotSize().PHP_EOL;
-echo $qf->calculateProbability(2634).PHP_EOL;
-echo number_format($qf->calculateCapacity(0.01)).PHP_EOL;
-echo $qf->getLoadFactor().PHP_EOL;
+$qf = new QuotientFilter(10,9);
+echo 'Bytes '.number_format($qf->getArraySize(true)).PHP_EOL;
+echo 'Bits '.number_format($qf->getArraySize(false)).PHP_EOL;
+echo 'Slots '.number_format($qf->getSlotCount()).PHP_EOL;
+echo 'Slot Size '.$qf->getSlotSize().PHP_EOL;
+echo 'Probability '.$qf->calculateProbability(1024).PHP_EOL;
+echo 'Capacity '.number_format($qf->calculateCapacity(0.01)).PHP_EOL;
+echo 'Current Load Factor '.$qf->getLoadFactor().PHP_EOL;
 echo $qf->getInfo(0.01).PHP_EOL;
 echo $qf->test();
 echo '</pre>';
