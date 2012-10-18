@@ -1,4 +1,6 @@
 ###Summary
+THIS PROJECT IS NOT COMPLETE NOR READY!  I've been busy with other things.
+
 This is a proper quotient implementation in PHP.  I could not find any open-source implementation of it.
 Like the bloom filter, a quotient filter is a probabilistic data structure that trades of 
 It uses a binary string to store the bit vector and manipulates based on byte indexes of the string.
