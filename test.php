@@ -21,7 +21,14 @@ echo 'Current Load Factor '.$qf->getLoadFactor().PHP_EOL;
 echo $qf->getInfo(0.01).PHP_EOL;
 echo $qf->test();
 echo '</pre>';
-
+$s = [];
+$s[] = 3;
+$s[] = 5;
+$s[] = 4;
+if ($s[] = 4){
+	echo 'ASDF';
+}
+var_dump($s);
 die();
 ?>
 <form action="" method="POST">

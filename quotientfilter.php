@@ -65,7 +65,9 @@ class QuotientFilter implements iAMQ {
 	
 	private $n = 0; // elements
 	private $q; // # of bits in slot addressing
+	private $q_mask;
 	private $r; // # of bits to store in slot (add 3 bits to get slot size)
+	private $r_mask;
 	private $slots; // 2 ^ q
 	private $slot_size; // r + 3
 	private $m; // memory size of bit array in bits (slots * slot_size)
@@ -77,7 +79,11 @@ class QuotientFilter implements iAMQ {
 		$this->slots = 1 << ($this->q = $q);
 		$this->slot_size = ($this->r = $p - $q) + 3;
 		$this->m = $this->slots * $this->slot_size;
-		if ($this->slot_size > 63) throw new Exception('This implementation of the quotient filter only supports 63 bit slots.');
+		
+		$this->q_mask = (1 << $this->q) - 1;
+		$this->r_mask = (1 << $this->r) - 1;
+		
+		if ($this->slot_size > 62) throw new Exception('This implementation of the quotient filter only supports 62 bit slots.');
 		if ($p - $q <= 0) throw new Exception('The fingerprint is too small to support the number of slots.');
 		if ($q < 1) throw new Exception('There must be at least one slot.');
 		if ($this->m > 17179869183) throw new Exception('The maximum data structure size is 1GB.');
@@ -119,16 +125,93 @@ class QuotientFilter implements iAMQ {
 			(isset($p) ? 'Capacity of '.number_format($this->calculateCapacity($p)).' (p='.$p.')'.PHP_EOL : '');
 	}
 	public function add($key){
+		if ($this->contains($key)) return;
 		$hash = hash($this->hash,$key,true);
-		while ($this->chunk_size > strlen($hash)) $hash .= hash($this->hash,$hash,true);
+		//while ($this->chunk_size > strlen($hash)) $hash .= hash($this->hash,$hash,true);
+		$hash = substr($hash,0,$this->chunk_size);
+		$hash_value = ord($hash[0]);
+		for ($i = 1; $i < strlen($hash); $i++){
+			$hash_value <<= 8;
+			$hash_value |= ord($hash[$i]);
+		}
 		
+		$quotient = ($hash_value >> $this->r) & $this->q_mask;
+		$remainder = $hash_value & $this->r_mask;
+		
+		//var_dump('QUOTIENT',$quotient);
+		
+		$slot = $this->getSlot($quotient);
+		if ($bits = $slot & 7){
+			
+			
+			
+			
+			
+			
+			
+		} else {
+			$this->setSlot($quotient,($remainder << 3) | 4);
+		}
 		$this->n++;
 	}
 	public function contains($key){
 		$hash = hash($this->hash,$key,true);
-		while ($this->chunk_size > strlen($hash)) $hash .= hash($this->hash,$hash,true);
+		//while ($this->chunk_size > strlen($hash)) $hash .= hash($this->hash,$hash,true);
+		$hash = substr($hash,0,$this->chunk_size);
+		$hash_value = ord($hash[0]);
 		
-		return true;
+		for ($i = 1; $i < strlen($hash); $i++){
+			$hash_value <<= 8;
+			$hash_value |= ord($hash[$i]);
+		}
+		
+		$quotient = ($hash_value >> $this->r) & $this->q_mask;
+		$remainder = $hash_value & $this->r_mask;
+		
+		//var_dump('QUOTIENT',$quotient);
+		
+		$slot = $this->getSlot($quotient);
+		if ($slot & 4){ // canonical bit set - may contain
+			if ($slot & 3){ // scan back
+				$runs = 0;
+				$offset = -1;
+				// scan back
+				while (true){
+					$slot = $this->getSlot($quotient+$offset);
+					if ($slot & 4){
+						$runs++;
+						if ($slot & 3 === 0) break;
+					}
+					$offset--;
+				}
+				$offset++;
+				// scan forward
+				while (true){
+					$slot = $this->getSlot($quotient+$offset);
+					if ($slot & 2 === 0){
+						$runs--;
+						if ($runs === 0){
+							while (true){
+								if ($slot >> 3 === $remainder) return true;
+								$slot = $this->getSlot($quotient+++$offset);
+								if ($slot & 2 === 0) break;
+							}
+							break;
+						}
+					}
+					$offset++;
+				}
+			} else { //scan run
+				if ($slot >> 3 === $remainder) return true;
+				while (true){
+					$slot = $this->getSlot(++$quotient);
+					if ($slot & 2){
+						if ($slot >> 3 === $remainder) return true;
+					} else break;
+				}
+			}
+		}
+		return false;
 	}
 	private function getSlot($i){
 		//var_dump('i',$i);
@@ -184,11 +267,11 @@ class QuotientFilter implements iAMQ {
 			// single ended mask
 			// last
 			$mask = ((2 << ($end_bit)) - 1) << (7 - $end_bit);
-			var_dump('Mask',$this->printByte($mask));
+			//var_dump('Mask',$this->printByte($mask));
 			$current = ord($this->bit_array[$end_word]);
-			var_dump('Current',$this->printByte($current));
+			//var_dump('Current',$this->printByte($current));
 			$replacement = ($s & ((2 << $end_bit) - 1)) << (7 - $end_bit);
-			var_dump('Replacement',$this->printByte($replacement));
+			//var_dump('Replacement',$this->printByte($replacement));
 			$current = $current ^ (($current ^ $replacement) & $mask);
 			$this->bit_array[$end_word] = chr($current);
 			$s >>= $end_bit + 1;
@@ -199,14 +282,12 @@ class QuotientFilter implements iAMQ {
 			}
 			//first
 			$mask = (1 << (8 - $start_bit)) - 1;
-			var_dump('Mask',$this->printByte($mask));
+			//var_dump('Mask',$this->printByte($mask));
 			$current = ord($this->bit_array[$start_word]);
-			var_dump('Current',$this->printByte($current));
+			//var_dump('Current',$this->printByte($current));
 			$replacement = $s;
 			$current = $current ^ (($current ^ $replacement) & $mask);
 			$this->bit_array[$start_word] = chr($current);
-			
-			
 		}
 	}
 	public function test(){
@@ -220,8 +301,9 @@ class QuotientFilter implements iAMQ {
 			var_dump($this->getSlot($i),decbin($this->getSlot($i)),$this->printSlot(decbin($this->getSlot($i))));
 		}
 		*/
+		/*
 		$this->setSlot(0,5);
-		$this->setSlot(5,5);
+		$this->setSlot(5,31);
 		$this->setSlot(10,3);
 		echo 'TEST'.PHP_EOL;
 		var_dump($this->printSlot(decbin($this->getSlot(0))));
@@ -235,11 +317,22 @@ class QuotientFilter implements iAMQ {
 		var_dump($this->printSlot(decbin($this->getSlot(7))));
 		var_dump($this->printSlot(decbin($this->getSlot(8))));
 		var_dump($this->printSlot(decbin($this->getSlot(9))));
+		var_dump((1 << 62) - 1);
+		*/
+		$this->add('ASDF');
+		$this->add('ASDFG');
+		var_dump($this->contains('ASDF'));
+		var_dump($this->contains('ASDFG'));
+		var_dump($this->contains('ASDFS'));
 	}
 	public function grow($bits = 1){
 		
+		
+		
 	}
 	public function shrink($bits = 1){
+		
+		
 		
 	}
 	public function printSlot($s){
