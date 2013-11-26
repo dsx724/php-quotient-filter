@@ -91,7 +91,7 @@ class QuotientFilter implements iAMQ {
 		$hash = hash($this->h,$key,true);
 		$i = hexdec(unpack('H*',substr($hash,0,$this->q_bytes))[1]) & $this->q_mask;
 		$r_hex = unpack('H*',substr($hash,$this->q_bytes,$this->r_bytes))[1];
-		if ($this->r_bytes === 4 && $r_hex > '7fffffffffffffff') $r[0] = strval(hexdec($r[0]) - 8);
+		if ($this->r_bytes === 4 && $r_hex > '7fffffffffffffff') $r[0] = strval(hexdec($r[0]) - 8); #31b workaround
 		$r = hexdec($r_hex) & $this->r_mask;
 		$j = $i;
 		
@@ -101,10 +101,10 @@ class QuotientFilter implements iAMQ {
 			$this->setFingerprint($j,0b100);
 			$this->setRemainder($j,$r);
 			return true;
-		} else if ($fingerprint & 4 === 0){
-			#new run
 		}
-		$runs = ($fingerprint & 4) >> 2;
+		$run_create = ($fingerprint ^ 4) >> 2;
+		echo ($run_create ? 'RC' : 'RE').'	';
+		$runs = 1;
 		
 		#find cluster start
 		while ($fingerprint ^ 4) {
@@ -123,28 +123,30 @@ class QuotientFilter implements iAMQ {
 		}
 		echo 'RIndex: '.$j.'	';
 		
-		#compare with remainders
-		echo 'Remainder: '.$this->getRemainder($j).'	R:'.$r.'	';
-		if ($this->getRemainder($j) === $r) return false;
 		do {
-			$j++;
-			if (($remainder = $this->getRemainder($j)) === $r) return false;
-			$fingerprint = $this->getFingerprint($j);
-		} while($fingerprint & 2);
-		
-		#x0x 000 001 100 101
-		#replace and move
-		if ($fingerprint === 0b000){
-			$this->setFingerprint($j,0b00);
-			$this->setRemainder($j,$r);
-			return true;
-		}
-		while ($fingerprint){
-			
-			$j++;
 			$fingerprint = $this->getFingerprint($j);
 			$remainder = $this->getRemainder($j);
+			if (!$run_create && $remainder === $r) return false;
+			$j++;
+		} while ($fingerprint & 2);
+		
+		echo 'R+1Index: '.$j.'	';
+		
+		$fingerprint = $this->getFingerprint($j);
+		$remainder = $this->getRemainder($j);
+		$this->setFingerprint($j,($run_create << 1) | 0b01 | $fingerprint & 4);
+		$this->setRemainder($j,$r);
+		while ($fingerprint & 7){
+			$j++;
+			$fingerprint_next = $this->getFingerprint($j);
+			$remainder_next = $this->getRemainder($j);
+			$this->setFingerprint($j,(($fingerprint & 2) + 1) | ($fingerprint_next & 4));
+			$this->setRemainder($j,$remainder);
+			$fingerprint = $fingerprint_next;
+			$remainder = $remainder_next;
 		}
+		if ($run_create) $this->setFingerprint($i,$this->getFingerprint($i) | 0b100);
+		return true;
 	}
 	public function contains($key){
 		$hash = hash($this->h,$key,true);
@@ -248,8 +250,8 @@ class QuotientFilter implements iAMQ {
 		#for ($i = 0; $i < 64; $i++) $this->setRemainder($i,($i + 2));
 		#for ($i = 0; $i < 72; $i++) echo $i.': '.$this->getFingerprint($i).' '.PHP_EOL;
 		#for ($i = 0; $i < 72; $i++) echo $i.': '.$this->getRemainder($i).' '.PHP_EOL;
-		for ($i = 0; $i < 2; $i++) echo ($this->add(1) ? 'Adding' : 'Exists').PHP_EOL;
-		for ($i = 0; $i < 5; $i++) echo ($this->contains($i) ? 'Yes' : 'No').PHP_EOL;
+		for ($i = 0; $i < 256; $i++) echo ($this->add($i) ? 'Adding' : 'Exists').PHP_EOL;
+		for ($i = 0; $i < 512; $i++) echo ($this->contains($i) ? 'Yes' : 'No').PHP_EOL;
 	}
 }
 
