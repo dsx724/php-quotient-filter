@@ -50,301 +50,210 @@ interface iAMQ {
 }
 
 class QuotientFilter implements iAMQ {
-	public static function createFromProbability($n, $prob, $extra_bits = 0){
-		if ($prob <= 0 || $prob >= 1) throw new Exception('Invalid false positive rate requested.');
-		if ($n <= 0) throw new Exception('Invalid capacity requested.');
-		//TODO create Quotient Filter by calculating p and q from n and prob
-		
-		return new self($p,$q);
-	}
-	// run - remainders with the same quotient stored continuously
-	// cluster - a maximal sequence of slots whose first element is in the canonical slot - contain 1 or more run
-	// is_occupied - canonical slot
-	// is_continuation -  part of run
-	// is_shifted - remainder not in canonical slot
-	
-	private $n = 0; // elements
-	private $q; // # of bits in slot addressing
+	private $q;
 	private $q_mask;
-	private $r; // # of bits to store in slot (add 3 bits to get slot size)
+	private $q_bytes;
+	private $r;
 	private $r_mask;
-	private $slots; // 2 ^ q
-	private $slot_size; // r + 3
-	private $m; // memory size of bit array in bits (slots * slot_size)
-	private $hash;
-	private $chunk_size;
-	private $bit_array;
-	
-	public function __construct($p, $q, $h='md5'){
-		$this->slots = 1 << ($this->q = $q);
-		$this->slot_size = ($this->r = $p - $q) + 3;
-		$this->m = $this->slots * $this->slot_size;
+	private $r_bytes;
+	private $h;
+	private $slots;
+	private $fast;
+	private $slow;
+	private $n;
+
+	public function __construct($q,$r,$h='md5'){
+		if ($q < 3) throw new Exception();
+		else if ($q > 32) throw new Exception(); #maximum 5.7B slots
+		if ($r > 63) throw new Exception(); #63 bits/remainder
+		$this->q = $q;
+		$this->q_mask = (1 << $q) - 1;
+		$this->q_bytes = ($q >> 3) + (($q & 7) > 0);
+		$this->r = $r;
+		$this->r_mask = ((1 << ($r - 1)) - 1) + (1 << ($r - 1));
+		$this->r_bytes = ($r >> 3) + (($r & 7) > 0);
+		$this->h = $h;
+		$this->slots = 2 << $q;
+		$fast_size_bits = $this->slots * 3;
+		$fast_size = ($fast_size_bits >> 3) + (($fast_size_bits & 7) > 0);
+		$this->fast = str_repeat("\0",$fast_size);
+		$slow_size_bits = $this->slots * $r;
+		$slow_size = ($slow_size_bits >> 3) + (($slow_size_bits & 7) > 0);
+		if ($slow_size >= (1 << 31)) throw new Exception(); #maximum 2GB-1
+		$this->slow = str_repeat("\0",$slow_size);
 		
-		$this->q_mask = (1 << $this->q) - 1;
-		$this->r_mask = (1 << $this->r) - 1;
-		
-		if ($this->slot_size > 62) throw new Exception('This implementation of the quotient filter only supports 62 bit slots.');
-		if ($p - $q <= 0) throw new Exception('The fingerprint is too small to support the number of slots.');
-		if ($q < 1) throw new Exception('There must be at least one slot.');
-		if ($this->m > 17179869183) throw new Exception('The maximum data structure size is 1GB.');
-		$this->hash = $h;
-		$this->chunk_size = ceil($p / 8);
-		$this->bit_array = (binary)(str_repeat("\0",$this->m >> 3));
-	}
-	public function calculateProbability($n = 0){
-		if ($n > $this->slots) throw new Exception('The data structure is not large enough to support the number of elements.');
-		return 1 - exp(-($n ?: $this->n)/($this->slots * (1 << $this->r)));
-	}
-	public function calculateCapacity($p){
-		return min($this->slots,floor(-log(1 - $p) * $this->slots * (1 << $this->r)));
-	}
-	public function getElementCount(){
-		return $this->n;
-	}
-	public function getSlotCount(){
-		return $this->slots;
-	}
-	public function getSlotSize(){
-		return $this->slot_size;
-	}
-	public function getArraySize($bytes = false){
-		return $this->m >> ($bytes ? 3 : 0);
-	}
-	public function getLoadFactor(){
-		return $this->n / $this->slots;
-	}
-	public function getInfo($p = null){
-		$units = array('','K','M','G','T','P','E','Z','Y');
-		$M = $this->getArraySize(true);
-		$magnitude = floor(log($M,1024));
-		$unit = $units[$magnitude];
-		$M /= pow(1024,$magnitude);
-		return 'Allocated '.$this->getArraySize().' bits ('.$M.' '.$unit.'Bytes)'.PHP_EOL.
-			'Allocated '.$this->getSlotCount(). ' slots of '.$this->getSlotSize().' bits'.PHP_EOL.
-			'Contains '.$this->getElementCount().' elements (a='.$this->getLoadFactor().')'.PHP_EOL.
-			(isset($p) ? 'Capacity of '.number_format($this->calculateCapacity($p)).' (p='.$p.')'.PHP_EOL : '');
+		echo 'slots: '.$this->slots.PHP_EOL;
+		echo 'quotient bits: '.$q.PHP_EOL;
+		echo 'quotient buffer bytes: '.$fast_size.PHP_EOL;
+		echo 'remainder buffer bytes: '.$slow_size.PHP_EOL;
 	}
 	public function add($key){
-		if ($this->contains($key)) return;
-		$hash = hash($this->hash,$key,true);
-		//while ($this->chunk_size > strlen($hash)) $hash .= hash($this->hash,$hash,true);
-		$hash = substr($hash,0,$this->chunk_size);
-		$hash_value = ord($hash[0]);
-		for ($i = 1; $i < strlen($hash); $i++){
-			$hash_value <<= 8;
-			$hash_value |= ord($hash[$i]);
+		$hash = hash($this->h,$key,true);
+		$i = hexdec(unpack('H*',substr($hash,0,$this->q_bytes))[1]) & $this->q_mask;
+		$r_hex = unpack('H*',substr($hash,$this->q_bytes,$this->r_bytes))[1];
+		if ($this->r_bytes === 4 && $r_hex > '7fffffffffffffff') $r[0] = strval(hexdec($r[0]) - 8);
+		$r = hexdec($r_hex) & $this->r_mask;
+		$j = $i;
+		
+		$fingerprint = $this->getFingerprint($i);
+		echo $key.'	Index: '.$i.'	Quotient: '.$fingerprint.'	Remainder: '.$r.'	';
+		if ($fingerprint === 0){
+			$this->setFingerprint($j,0b100);
+			$this->setRemainder($j,$r);
+			return true;
+		} else if ($fingerprint & 4 === 0){
+			#new run
 		}
+		$runs = ($fingerprint & 4) >> 2;
 		
-		$quotient = ($hash_value >> $this->r) & $this->q_mask;
-		$remainder = $hash_value & $this->r_mask;
-		
-		//var_dump('QUOTIENT',$quotient);
-		
-		$slot = $this->getSlot($quotient);
-		if ($bits = $slot & 7){
-			
-			
-			
-			
-			
-			
-			
-		} else {
-			$this->setSlot($quotient,($remainder << 3) | 4);
+		#find cluster start
+		while ($fingerprint ^ 4) {
+			$j--;
+			$fingerprint = $this->getFingerprint($j);
+			$runs += $fingerprint & 4;
 		}
-		$this->n++;
+		echo 'Runs: '.$runs.'	';
+		echo 'CIndex: '.$j.'	';
+		
+		#find run start
+		while ($runs > 1){
+			$j++;
+			$fingerprint = $this->getFingerprint($j);
+			$runs -= (($fingerprint ^ 2) & 2) >> 1;
+		}
+		echo 'RIndex: '.$j.'	';
+		
+		#compare with remainders
+		echo 'Remainder: '.$this->getRemainder($j).'	R:'.$r.'	';
+		if ($this->getRemainder($j) === $r) return false;
+		do {
+			$j++;
+			if (($remainder = $this->getRemainder($j)) === $r) return false;
+			$fingerprint = $this->getFingerprint($j);
+		} while($fingerprint & 2);
+		
+		#x0x 000 001 100 101
+		#replace and move
+		if ($fingerprint === 0b000){
+			$this->setFingerprint($j,0b00);
+			$this->setRemainder($j,$r);
+			return true;
+		}
+		while ($fingerprint){
+			
+			$j++;
+			$fingerprint = $this->getFingerprint($j);
+			$remainder = $this->getRemainder($j);
+		}
 	}
 	public function contains($key){
-		$hash = hash($this->hash,$key,true);
-		//while ($this->chunk_size > strlen($hash)) $hash .= hash($this->hash,$hash,true);
-		$hash = substr($hash,0,$this->chunk_size);
-		$hash_value = ord($hash[0]);
+		$hash = hash($this->h,$key,true);
+		$i = hexdec(unpack('H*',substr($hash,0,$this->q_bytes))[1]) & $this->q_mask;
+		$r_hex = unpack('H*',substr($hash,$this->q_bytes,$this->r_bytes))[1];
+		if ($this->r_bytes === 4 && $r_hex > '7fffffffffffffff') $r[0] = strval(hexdec($r[0]) - 8);
+		$r = hexdec($r_hex) & $this->r_mask;
+		$j = $i;
 		
-		for ($i = 1; $i < strlen($hash); $i++){
-			$hash_value <<= 8;
-			$hash_value |= ord($hash[$i]);
+		$fingerprint = $this->getFingerprint($j);
+		echo $key.'	Index: '.$i.'	Quotient: '.$fingerprint.'	Remainder: '.$r.'	';
+		if ($fingerprint === 0) return false;
+		$runs = ($fingerprint & 4) >> 2;
+		if ($runs === 0) return false;
+		
+		#find cluster start
+		while ($fingerprint ^ 4) {
+			$j--;
+			$fingerprint = $this->getFingerprint($j);
+			$runs += $fingerprint & 4;
 		}
+		echo 'Runs: '.$runs.'	';
+		echo 'CIndex: '.$j.'	';
 		
-		$quotient = ($hash_value >> $this->r) & $this->q_mask;
-		$remainder = $hash_value & $this->r_mask;
-		
-		//var_dump('QUOTIENT',$quotient);
-		
-		$slot = $this->getSlot($quotient);
-		if ($slot & 4){ // canonical bit set - may contain
-			if ($slot & 3){ // scan back
-				$runs = 0;
-				$offset = -1;
-				// scan back
-				while (true){
-					$slot = $this->getSlot($quotient+$offset);
-					if ($slot & 4){
-						$runs++;
-						if ($slot & 3 === 0) break;
-					}
-					$offset--;
-				}
-				$offset++;
-				// scan forward
-				while (true){
-					$slot = $this->getSlot($quotient+$offset);
-					if ($slot & 2 === 0){
-						$runs--;
-						if ($runs === 0){
-							while (true){
-								if ($slot >> 3 === $remainder) return true;
-								$slot = $this->getSlot($quotient+++$offset);
-								if ($slot & 2 === 0) break;
-							}
-							break;
-						}
-					}
-					$offset++;
-				}
-			} else { //scan run
-				if ($slot >> 3 === $remainder) return true;
-				while (true){
-					$slot = $this->getSlot(++$quotient);
-					if ($slot & 2){
-						if ($slot >> 3 === $remainder) return true;
-					} else break;
-				}
-			}
+		#find run start
+		while ($runs > 1){
+			$j++;
+			$fingerprint = $this->getFingerprint($j);
+			$runs -= (($fingerprint ^ 2) & 2) >> 1;
 		}
+		echo 'RIndex: '.$j.'	';
+		
+		#compare with remainders
+		echo 'Remainder: '.$this->getRemainder($j).'	R:'.$r.'	';
+		if ($this->getRemainder($j) === $r) return true;
+		do {
+			$j++;
+			if ($this->getRemainder($j) === $r) return true;
+			$fingerprint = $this->getFingerprint($j);
+		} while($fingerprint & 2);
 		return false;
 	}
-	private function getSlot($i){
-		//var_dump('i',$i);
-		$start = $this->slot_size * $i;
-		$start_word = $start >> 3;
-		$start_bit = $start % 8;
-		//var_dump('Start',$start);
-		//var_dump($start_word,$start_bit);
-		$end = $this->slot_size * ($i + 1) - 1;
-		$end_word = $end >> 3;
-		$end_bit = $end % 8;
-		//var_dump('End',$end);
-		//var_dump($end_word,$end_bit);
-		$slice = substr($this->bit_array,$start_word,$end_word - $start_word + 1);
-		//var_dump('Slice',$slice,base_convert(unpack('H*', $slice)[1], 16, 2));
-		$mask = (1 << (8 - $start_bit)) - 1;
-		$slot = ord($slice[0]) & $mask;
-		//var_dump('Piece',$slot);
-		for ($i = 1; $i < strlen($slice); $i++){
-			$slot <<= 8;
-			$slot |= ord($slice[$i]);
-			//var_dump($slot);
-		}
-		$slot >>= 7 - $end_bit;
-		//var_dump($slot);
-		return $slot;
+	public function remove($key){
+		
+		
 	}
-	private function setSlot($i,$s){
-		$start = $this->slot_size * $i;
-		$start_word = $start >> 3;
-		$start_bit = $start % 8;
-		//var_dump('Start',$start);
-		//var_dump($start_word,$start_bit);
-		$end = $this->slot_size * ($i + 1) - 1;
-		$end_word = $end >> 3;
-		$end_bit = $end % 8;
-		//var_dump('End',$end);
-		//var_dump($end_word,$end_bit);
-		if ($start_word === $end_word){
-			// double ended mask
-			$mask = ((2 << ($end_bit - $start_bit)) - 1) << (7 - $end_bit);
-			//var_dump('Mask',$this->printByte($mask));
-			$current = ord($this->bit_array[$start_word]);
-			//var_dump('Current',$this->printByte($current));
-			//r = a ^ ((a ^ b) & mask);
-			//var_dump('Replace',$this->printByte($s));
-			$replacement = $s << (7 - $end_bit);
-			//var_dump('SReplace',$this->printByte($current),$this->printByte($replacement),'XOR',$this->printByte($current ^ $replacement),$this->printByte((($current ^ $replacement) & $mask)));
-			$current = $current ^ (($current ^ $replacement) & $mask);
-			//var_dump('Cleared',$this->printByte($current));
-			$this->bit_array[$start_word] = chr($current);
-		} else {
-			// single ended mask
-			// last
-			$mask = ((2 << ($end_bit)) - 1) << (7 - $end_bit);
-			//var_dump('Mask',$this->printByte($mask));
-			$current = ord($this->bit_array[$end_word]);
-			//var_dump('Current',$this->printByte($current));
-			$replacement = ($s & ((2 << $end_bit) - 1)) << (7 - $end_bit);
-			//var_dump('Replacement',$this->printByte($replacement));
-			$current = $current ^ (($current ^ $replacement) & $mask);
-			$this->bit_array[$end_word] = chr($current);
-			$s >>= $end_bit + 1;
-			// middle
-			for ($j = $end_word - 1; $j > $start_word; $j--){
-				$this->bit_array[$j] = chr($s & ((1 << 8) - 1));
-				$s >>= 8;
+	private function calculateSlot($i){
+		return (($i % $this->slots) + $this->slots) % $this->slots;
+	}
+	private function getSlot($i,$s,&$t){
+		$i = $this->calculateSlot($i);
+		$start = $i * $s;
+		$start_byte = $start >> 3;
+		$start_bit = $start & 7;
+		$end = $start + $s - 1;
+		$end_byte = $end >> 3;
+		$end_bit = $end & 7;
+		$result = ((ord($t[$start_byte]) << $start_bit) & 0b11111111) >> $start_bit;
+		for ($j = $start_byte + 1; $j <= $end_byte; $j++) $result = ($result << 8) | (ord($t[$j]));
+		return $result >> (7 - $end_bit);
+	}
+	private function setSlot($i,$b,$s,&$t){
+		$msb = 1 << ($s - 1); #PHP 4GB
+		if ($b < 0 || $b > ($msb - 1 + $msb)) throw new Exception();
+		$i = $this->calculateSlot($i);
+		$start = $i * $s;
+		$start_byte = $start >> 3;
+		$start_bit = $start & 7;
+		$end = $start + $s - 1;
+		$end_byte = $end >> 3;
+		$end_bit = $end & 7;
+		for ($j = $end_byte; $j >= $start_byte; $j--){
+			$current = ord($t[$j]);
+			$mask = 0b11111111;
+			if ($j === $start_byte){
+				$mask = $mask - ((1 << (8 - $start_bit)) - 1);
+				$value = $b << ((7 - $end_bit)*($start_byte === $end_byte));
+			} else {
+				$value = ($b & ((1 << ($end_bit + 1)) - 1)) << (7 - $end_bit);
+				$b >>= $end_bit + 1;
 			}
-			//first
-			$mask = (1 << (8 - $start_bit)) - 1;
-			//var_dump('Mask',$this->printByte($mask));
-			$current = ord($this->bit_array[$start_word]);
-			//var_dump('Current',$this->printByte($current));
-			$replacement = $s;
-			$current = $current ^ (($current ^ $replacement) & $mask);
-			$this->bit_array[$start_word] = chr($current);
+			if ($j === $end_byte) $mask = $mask + ((1 << (7 - $end_bit)) - 1);
+			$current = $current & $mask;
+			$t[$j] = chr($current | $value);
 		}
+	}
+	private function getFingerprint($i){
+		return $this->getSlot($i,3,$this->fast);
+	}
+	private function setFingerprint($i,$b){
+		return $this->setSlot($i,$b,3,$this->fast);
+	}
+	private function getRemainder($i){
+		return $this->getSlot($i,$this->r,$this->slow);
+	}
+	private function setRemainder($i,$b){
+		return $this->setSlot($i,$b,$this->r,$this->slow);
 	}
 	public function test(){
-		/*
-		for ($i = 0; $i < 100; $i++){
-			$this->bit_array[$i] = chr($i+1);
-			if ($i < 10) var_dump(decbin(ord($this->bit_array[$i])));
-		}
-		for ($i = 0; $i < 5; $i++){
-			echo '<b> Slot '.$i.'</b>'.PHP_EOL;
-			var_dump($this->getSlot($i),decbin($this->getSlot($i)),$this->printSlot(decbin($this->getSlot($i))));
-		}
-		*/
-		/*
-		$this->setSlot(0,5);
-		$this->setSlot(5,31);
-		$this->setSlot(10,3);
-		echo 'TEST'.PHP_EOL;
-		var_dump($this->printSlot(decbin($this->getSlot(0))));
-		var_dump($this->printSlot(decbin($this->getSlot(5))));
-		var_dump($this->printSlot(decbin($this->getSlot(10))));
-		var_dump($this->printSlot(decbin($this->getSlot(1))));
-		var_dump($this->printSlot(decbin($this->getSlot(2))));
-		var_dump($this->printSlot(decbin($this->getSlot(3))));
-		var_dump($this->printSlot(decbin($this->getSlot(4))));
-		var_dump($this->printSlot(decbin($this->getSlot(6))));
-		var_dump($this->printSlot(decbin($this->getSlot(7))));
-		var_dump($this->printSlot(decbin($this->getSlot(8))));
-		var_dump($this->printSlot(decbin($this->getSlot(9))));
-		var_dump((1 << 62) - 1);
-		*/
-		$this->add('ASDF');
-		$this->add('ASDFG');
-		var_dump($this->contains('ASDF'));
-		var_dump($this->contains('ASDFG'));
-		var_dump($this->contains('ASDFS'));
-	}
-	public function grow($bits = 1){
-		
-		
-		
-	}
-	public function shrink($bits = 1){
-		
-		
-		
-	}
-	public function printSlot($s){
-		return trim(strrev(
-			implode(' ',array_map(
-				function ($line){ return str_pad($line,$this->slot_size % 8 ?: 8,'0',STR_PAD_RIGHT); },
-				explode("\r\n",trim(chunk_split(strrev(str_pad($s,$this->slot_size,'0',STR_PAD_LEFT)),8)))
-			)))
-		);
-	}
-	public function printByte($i){
-		return str_pad(is_string($i) ? decbin(ord($i)) : decbin($i),8,'0',STR_PAD_LEFT);
+		#for ($i = 0; $i < 64; $i++) $this->setFingerprint($i,($i + 2) % 8);
+		#for ($i = 0; $i < 64; $i++) $this->setRemainder($i,($i + 2));
+		#for ($i = 0; $i < 72; $i++) echo $i.': '.$this->getFingerprint($i).' '.PHP_EOL;
+		#for ($i = 0; $i < 72; $i++) echo $i.': '.$this->getRemainder($i).' '.PHP_EOL;
+		for ($i = 0; $i < 2; $i++) echo ($this->add(1) ? 'Adding' : 'Exists').PHP_EOL;
+		for ($i = 0; $i < 5; $i++) echo ($this->contains($i) ? 'Yes' : 'No').PHP_EOL;
 	}
 }
+
+$qf = new QuotientFilter(16,8);
+$qf->test();
+
 ?>
