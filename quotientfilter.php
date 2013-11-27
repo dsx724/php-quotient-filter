@@ -61,6 +61,7 @@ class QuotientFilter implements iAMQ {
 	private $fast;
 	private $slow;
 	private $n;
+	const BYTE_MASK = 255;
 
 	public function __construct($q,$r,$h='md5'){
 		if ($q < 3) throw new Exception();
@@ -73,7 +74,7 @@ class QuotientFilter implements iAMQ {
 		$this->r_mask = ((1 << ($r - 1)) - 1) + (1 << ($r - 1));
 		$this->r_bytes = ($r >> 3) + (($r & 7) > 0);
 		$this->h = $h;
-		$this->slots = 2 << $q;
+		$this->slots = 1 << $q;
 		$fast_size_bits = $this->slots * 3;
 		$fast_size = ($fast_size_bits >> 3) + (($fast_size_bits & 7) > 0);
 		$this->fast = str_repeat("\0",$fast_size);
@@ -91,29 +92,29 @@ class QuotientFilter implements iAMQ {
 		$hash = hash($this->h,$key,true);
 		$i = hexdec(unpack('H*',substr($hash,0,$this->q_bytes))[1]) & $this->q_mask;
 		$r_hex = unpack('H*',substr($hash,$this->q_bytes,$this->r_bytes))[1];
-		if ($this->r_bytes === 4 && $r_hex > '7fffffffffffffff') $r[0] = strval(hexdec($r[0]) - 8); #31b workaround
+		if ($this->r_bytes === 8 && $r_hex > '7fffffffffffffff') $r_hex[0] = strval(hexdec($r_hex[0]) - 8); #31b workaround
 		$r = hexdec($r_hex) & $this->r_mask;
 		$j = $i;
 		
 		$fingerprint = $this->getFingerprint($i);
-		echo $key.'	Index: '.$i.'	Quotient: '.$fingerprint.'	Remainder: '.$r.'	';
+		echo $key.' I: '.$i.'	';#.' Q: '.$fingerprint.' R: '.$r.'	';
 		if ($fingerprint === 0){
 			$this->setFingerprint($j,0b100);
 			$this->setRemainder($j,$r);
 			return true;
 		}
-		$run_create = ($fingerprint ^ 4) >> 2;
-		echo ($run_create ? 'RC' : 'RE').'	';
+		$run_exist = ($fingerprint & 4) >> 2;
+		echo ($run_exist ? 'RUN_E' : 'RUN_C').' ';
 		$runs = 1;
 		
 		#find cluster start
 		while ($fingerprint ^ 4) {
 			$j--;
 			$fingerprint = $this->getFingerprint($j);
-			$runs += $fingerprint & 4;
+			$runs += $fingerprint & 4 >> 2;
 		}
-		echo 'Runs: '.$runs.'	';
-		echo 'CIndex: '.$j.'	';
+		echo 'RUNS: '.$runs.' ';
+		echo 'C_I: '.$j.' ';
 		
 		#find run start
 		while ($runs > 1){
@@ -121,31 +122,37 @@ class QuotientFilter implements iAMQ {
 			$fingerprint = $this->getFingerprint($j);
 			$runs -= (($fingerprint ^ 2) & 2) >> 1;
 		}
-		echo 'RIndex: '.$j.'	';
+		echo 'R_I: '.$j.' ';
 		
-		do {
-			$fingerprint = $this->getFingerprint($j);
-			$remainder = $this->getRemainder($j);
-			if (!$run_create && $remainder === $r) return false;
-			$j++;
-		} while ($fingerprint & 2);
+		#check for remainder
+		if ($run_exist){
+			do {
+				$fingerprint = $this->getFingerprint($j);
+				$remainder = $this->getRemainder($j);
+				if ($run_exist && $remainder === $r) return false;
+				$j++;
+			} while ($fingerprint & 2);
+		}
+		echo 'R+1_I: '.$j.' ';
 		
-		echo 'R+1Index: '.$j.'	';
-		
+		#shift cluster 
 		$fingerprint = $this->getFingerprint($j);
 		$remainder = $this->getRemainder($j);
-		$this->setFingerprint($j,($run_create << 1) | 0b01 | $fingerprint & 4);
+		$this->setFingerprint($j,$fingerprint & 4 | (($run_exist) << 1) | 1 );
 		$this->setRemainder($j,$r);
-		while ($fingerprint & 7){
+		while ($fingerprint){
 			$j++;
 			$fingerprint_next = $this->getFingerprint($j);
 			$remainder_next = $this->getRemainder($j);
-			$this->setFingerprint($j,(($fingerprint & 2) + 1) | ($fingerprint_next & 4));
+			$k = (($fingerprint & 2) + 1) | ($fingerprint_next & 4);
+			echo "{ $j:$fingerprint:$fingerprint_next:$k } ";
+			$this->setFingerprint($j,$k);
 			$this->setRemainder($j,$remainder);
 			$fingerprint = $fingerprint_next;
 			$remainder = $remainder_next;
 		}
-		if ($run_create) $this->setFingerprint($i,$this->getFingerprint($i) | 0b100);
+		echo $i;
+		if (!$run_exist) $this->setFingerprint($i,$this->getFingerprint($i) | 0b100);
 		return true;
 	}
 	public function contains($key){
@@ -157,7 +164,7 @@ class QuotientFilter implements iAMQ {
 		$j = $i;
 		
 		$fingerprint = $this->getFingerprint($j);
-		echo $key.'	Index: '.$i.'	Quotient: '.$fingerprint.'	Remainder: '.$r.'	';
+		echo $key.'	I: '.$i.'	';#.'	Q: '.$fingerprint.'	R: '.$r.'	';
 		if ($fingerprint === 0) return false;
 		$runs = ($fingerprint & 4) >> 2;
 		if ($runs === 0) return false;
@@ -168,8 +175,8 @@ class QuotientFilter implements iAMQ {
 			$fingerprint = $this->getFingerprint($j);
 			$runs += $fingerprint & 4;
 		}
-		echo 'Runs: '.$runs.'	';
-		echo 'CIndex: '.$j.'	';
+		echo 'RUNS: '.$runs.'	';
+		echo 'C_I: '.$j.' ';
 		
 		#find run start
 		while ($runs > 1){
@@ -177,10 +184,10 @@ class QuotientFilter implements iAMQ {
 			$fingerprint = $this->getFingerprint($j);
 			$runs -= (($fingerprint ^ 2) & 2) >> 1;
 		}
-		echo 'RIndex: '.$j.'	';
+		echo 'R_I: '.$j.' ';
 		
 		#compare with remainders
-		echo 'Remainder: '.$this->getRemainder($j).'	R:'.$r.'	';
+		echo 'R_CUR: '.$this->getRemainder($j).' R_NEW:'.$r.'	';
 		if ($this->getRemainder($j) === $r) return true;
 		do {
 			$j++;
@@ -204,33 +211,56 @@ class QuotientFilter implements iAMQ {
 		$end = $start + $s - 1;
 		$end_byte = $end >> 3;
 		$end_bit = $end & 7;
-		$result = ((ord($t[$start_byte]) << $start_bit) & 0b11111111) >> $start_bit;
-		for ($j = $start_byte + 1; $j <= $end_byte; $j++) $result = ($result << 8) | (ord($t[$j]));
-		return $result >> (7 - $end_bit);
+		#echo $start.','.$start_byte.','.$start_bit.','.$end.','.$end_byte.','.$end_bit.PHP_EOL;
+		if ($start_byte === $end_byte) return (ord($t[$start_byte]) >> (7 - $end_bit)) & ((1 << $s) - 1);
+		for ($j = $start_byte; $j <= $end_byte; $j++){
+			#echo $this->printBinary(ord($t[$j])).PHP_EOL;
+			if ($j === $start_byte){
+				$value = (ord($t[$j]) << $start_bit & self::BYTE_MASK) >> $start_bit;
+			} else if ($j === $end_byte){
+				$value = ($value << ($end_bit + 1)) | (ord($t[$j]) >> (7 - $end_bit));
+			} else {
+				$value = ($value << 8) | ord($t[$j]);
+			}
+			#echo $value.PHP_EOL;
+		}
+		return $value;
 	}
 	private function setSlot($i,$b,$s,&$t){
-		$msb = 1 << ($s - 1); #PHP 4GB
-		if ($b < 0 || $b > ($msb - 1 + $msb)) throw new Exception();
+		#$msb = 1 << ($s - 1); #PHP 4GB
+		if ($b < 0) throw new Exception();
 		$i = $this->calculateSlot($i);
 		$start = $i * $s;
 		$start_byte = $start >> 3;
 		$start_bit = $start & 7;
 		$end = $start + $s - 1;
 		$end_byte = $end >> 3;
-		$end_bit = $end & 7;
-		for ($j = $end_byte; $j >= $start_byte; $j--){
-			$current = ord($t[$j]);
-			$mask = 0b11111111;
-			if ($j === $start_byte){
-				$mask = $mask - ((1 << (8 - $start_bit)) - 1);
-				$value = $b << ((7 - $end_bit)*($start_byte === $end_byte));
-			} else {
-				$value = ($b & ((1 << ($end_bit + 1)) - 1)) << (7 - $end_bit);
-				$b >>= $end_bit + 1;
-			}
-			if ($j === $end_byte) $mask = $mask + ((1 << (7 - $end_bit)) - 1);
+		$end_bit = ($end & 7) + 1;
+		#echo $start.','.$start_byte.','.$start_bit.','.$end.','.$end_byte.','.$end_bit.PHP_EOL;
+		if ($start_byte === $end_byte){
+			$current = ord($t[$start_byte]);
+			$mask = self::BYTE_MASK & (self::BYTE_MASK << (8 - $start_bit)) | (self::BYTE_MASK >> $end_bit); #11000011
+			$value = $b << (8 - $end_bit);
 			$current = $current & $mask;
-			$t[$j] = chr($current | $value);
+			$t[$start_byte] = chr($current | $value);
+		} else {
+			for ($j = $end_byte; $j >= $start_byte; $j--){
+				$current = ord($t[$j]);
+				$mask = self::BYTE_MASK;
+				if ($j === $start_byte){
+					$value = $b & (self::BYTE_MASK >> $start_bit); #00011111
+					$mask &= self::BYTE_MASK << (8 - $start_bit); #11100000
+				} else if ($j === $end_byte){
+					$value = $b << (8 - $end_bit); #11100000
+					$b >>= $end_bit;
+					$mask &= self::BYTE_MASK >> $end_bit; #00011111
+				} else {
+					$value = $b & self::BYTE_MASK;
+					$b >>= 8;
+				}
+				$current = $current & $mask;
+				$t[$j] = chr($current | $value);
+			}
 		}
 	}
 	private function getFingerprint($i){
@@ -250,12 +280,55 @@ class QuotientFilter implements iAMQ {
 		#for ($i = 0; $i < 64; $i++) $this->setRemainder($i,($i + 2));
 		#for ($i = 0; $i < 72; $i++) echo $i.': '.$this->getFingerprint($i).' '.PHP_EOL;
 		#for ($i = 0; $i < 72; $i++) echo $i.': '.$this->getRemainder($i).' '.PHP_EOL;
-		for ($i = 0; $i < 256; $i++) echo ($this->add($i) ? 'Adding' : 'Exists').PHP_EOL;
-		for ($i = 0; $i < 512; $i++) echo ($this->contains($i) ? 'Yes' : 'No').PHP_EOL;
+		#echo 'MAX : '.$this->printBinary(PHP_INT_MAX).PHP_EOL;
+		#$this->setSlot(0,0,$this->r,$this->slow);
+		#$this->setSlot(1,1,$this->r,$this->slow);
+		#$this->setSlot(2,2,$this->r,$this->slow);
+		#$this->setSlot(3,3,$this->r,$this->slow);
+		#$this->setSlot(4,65534,$this->r,$this->slow);
+		#$this->setSlot(5,65535,$this->r,$this->slow);
+		#echo $this->printBinary(substr($this->slow,0,12)).PHP_EOL;
+		#echo $this->printBinary($this->getSlot(0,$this->r,$this->slow)).PHP_EOL;
+		#echo $this->printBinary($this->getSlot(1,$this->r,$this->slow)).PHP_EOL;
+		#echo $this->printBinary($this->getSlot(2,$this->r,$this->slow)).PHP_EOL;
+		#echo $this->printBinary($this->getSlot(3,$this->r,$this->slow)).PHP_EOL;
+		#echo $this->printBinary($this->getSlot(4,$this->r,$this->slow)).PHP_EOL;
+		#echo $this->printBinary($this->getSlot(5,$this->r,$this->slow)).PHP_EOL;
+		#echo $this->printBinary($test).PHP_EOL;
+		#echo $this->printBinary(substr($this->slow,7,9)).PHP_EOL;
+		#echo $this->printBinary($this->getSlot(1,$this->r,$this->slow)).PHP_EOL;
+		#echo $this->printBinary($test).PHP_EOL;
+		for ($i = 0; $i < 8; $i++){
+			echo ($this->add($i) ? 'A' : 'E').PHP_EOL;
+			
+			if ($i > 5){
+				for ($j = 0; $j < 8; $j++) echo $this->printBinary($this->getFingerprint($j),3).' ';
+				echo PHP_EOL;
+				#echo $this->printBinary(substr($this->fast,0,3));
+				echo PHP_EOL.PHP_EOL;
+			}
+			
+		}
+		#for ($i = 0; $i < 512; $i++) echo ($this->contains($i) ? 'Yes' : 'No').PHP_EOL;
+	}
+	private function printBinary($key,$length = 0){
+		if (is_int($key)){
+			$array = [];
+			#if ($adjust) $key <<= abs($adjust);
+			do {
+				$array[] = str_pad(decbin($key & self::BYTE_MASK),$length ?: 8,'0',STR_PAD_LEFT);
+				$key >>= 8;
+			} while ($key);
+			return implode(array_reverse($array));
+		} else if (is_string($key)){
+			return implode(array_map(function($v) use ($length){ return str_pad(decbin(ord($v)),$length ?: 8,'0',STR_PAD_LEFT);},str_split($key)));
+		} else {
+			
+		}
 	}
 }
 
-$qf = new QuotientFilter(16,8);
+$qf = new QuotientFilter(3,32);
 $qf->test();
 
 ?>
