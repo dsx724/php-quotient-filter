@@ -44,6 +44,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // m = 2^q - number of slots
 // 1 - e^(-a/2^r) <= 2^-r
 
+#TODO: Fix reverse cycle for $j
+#TODO: Check boundary conditions of integers
+
 interface iAMQ {
 	public function add($key);
 	public function contains($key);
@@ -145,13 +148,12 @@ class QuotientFilter implements iAMQ {
 			$fingerprint_next = $this->getFingerprint($j);
 			$remainder_next = $this->getRemainder($j);
 			$k = (($fingerprint & 2) + 1) | ($fingerprint_next & 4);
-			echo "{ $j:$fingerprint:$fingerprint_next:$k } ";
+			#echo "{ $j:$fingerprint:$fingerprint_next:$k } ";
 			$this->setFingerprint($j,$k);
 			$this->setRemainder($j,$remainder);
 			$fingerprint = $fingerprint_next;
 			$remainder = $remainder_next;
 		}
-		echo $i;
 		if (!$run_exist) $this->setFingerprint($i,$this->getFingerprint($i) | 0b100);
 		return true;
 	}
@@ -298,14 +300,13 @@ class QuotientFilter implements iAMQ {
 		#echo $this->printBinary(substr($this->slow,7,9)).PHP_EOL;
 		#echo $this->printBinary($this->getSlot(1,$this->r,$this->slow)).PHP_EOL;
 		#echo $this->printBinary($test).PHP_EOL;
-		for ($i = 0; $i < 8; $i++){
+		for ($i = 0; $i < $this->slots; $i++){
 			echo ($this->add($i) ? 'A' : 'E').PHP_EOL;
-			
-			if ($i > 5){
-				for ($j = 0; $j < 8; $j++) echo $this->printBinary($this->getFingerprint($j),3).' ';
+			if ($i > $this->slots - 2){
+				for ($j = 0; $j < $this->slots; $j++) echo $this->printBinary($this->getFingerprint($j),3).' ';
 				echo PHP_EOL;
 				#echo $this->printBinary(substr($this->fast,0,3));
-				echo PHP_EOL.PHP_EOL;
+				#echo PHP_EOL.PHP_EOL;
 			}
 			
 		}
@@ -328,7 +329,7 @@ class QuotientFilter implements iAMQ {
 	}
 }
 
-$qf = new QuotientFilter(3,32);
+$qf = new QuotientFilter(5,63);
 $qf->test();
 
 ?>
