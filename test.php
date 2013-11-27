@@ -9,6 +9,32 @@ foreach ($config['test']['include'] as $include) require_once $include;
 
 echo '<pre>';
 
+
+$qf = new QuotientFilter(30,4);
+$t1 = microtime(true);
+$elements = $qf->slots / 4;
+for ($i = 1; $i < $elements; $i++){
+	if ($i % 100000 === 0){
+		$t2 = microtime(true);
+		echo ($t2 - $t1).' seconds ';
+		echo ($i / ($t2 - $t1)).' elements/second';
+		echo PHP_EOL;
+	}
+	$qf->add($i);
+#echo $i.'	'.($this->add($i) ? 'A' : 'E').PHP_EOL;
+#if ($i > $this->slots - 3){
+#for ($j = 0; $j < $this->slots; $j++) echo $this->printBinary($this->getFingerprint($j),$this->q).' ';
+	#echo PHP_EOL;
+	#for ($j = 0; $j < $this->slots; $j++) echo $this->printInteger($this->getRemainder($j),strlen(pow(2,$this->r) - 1)).' ';
+	#echo PHP_EOL;
+	#echo $this->printBinary(substr($this->fast,0,3));
+	#echo PHP_EOL.PHP_EOL;
+	#}
+}
+#for ($i = 0; $i < $this->slots * 2; $i++){
+#	echo $i.'	'.($this->contains($i) ? 'Yes' : 'No').PHP_EOL;
+#}
+exit;
 $qf = new QuotientFilter(12,10);
 //$qf = new QuotientFilter(22,9);
 echo 'Bytes '.number_format($qf->getArraySize(true)).PHP_EOL;

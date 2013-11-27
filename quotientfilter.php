@@ -60,7 +60,7 @@ class QuotientFilter implements iAMQ {
 	private $r_mask;
 	private $r_bytes;
 	private $h;
-	private $slots;
+	public $slots;
 	private $fast;
 	private $slow;
 	private $n;
@@ -287,45 +287,7 @@ class QuotientFilter implements iAMQ {
 		#echo $this->getSlot($i,$this->r,$this->slow).PHP_EOL;
 		#return $this->setSlot($i,$b,$this->r,$this->slow);
 	}
-	public function test(){
-		#for ($i = 0; $i < 64; $i++) $this->setFingerprint($i,($i + 2) % 8);
-		#for ($i = 0; $i < 64; $i++) $this->setRemainder($i,($i + 2));
-		#for ($i = 0; $i < 72; $i++) echo $i.': '.$this->getFingerprint($i).' '.PHP_EOL;
-		#for ($i = 0; $i < 72; $i++) echo $i.': '.$this->getRemainder($i).' '.PHP_EOL;
-		#echo 'MAX : '.$this->printBinary(PHP_INT_MAX).PHP_EOL;
-		#$this->setSlot(0,0,$this->r,$this->slow);
-		#$this->setSlot(1,1,$this->r,$this->slow);
-		#$this->setSlot(2,2,$this->r,$this->slow);
-		#$this->setSlot(3,3,$this->r,$this->slow);
-		#$this->setSlot(4,65534,$this->r,$this->slow);
-		#$this->setSlot(5,65535,$this->r,$this->slow);
-		#echo $this->printBinary(substr($this->slow,0,12)).PHP_EOL;
-		#echo $this->printBinary($this->getSlot(0,$this->r,$this->slow)).PHP_EOL;
-		#echo $this->printBinary($this->getSlot(1,$this->r,$this->slow)).PHP_EOL;
-		#echo $this->printBinary($this->getSlot(2,$this->r,$this->slow)).PHP_EOL;
-		#echo $this->printBinary($this->getSlot(3,$this->r,$this->slow)).PHP_EOL;
-		#echo $this->printBinary($this->getSlot(4,$this->r,$this->slow)).PHP_EOL;
-		#echo $this->printBinary($this->getSlot(5,$this->r,$this->slow)).PHP_EOL;
-		#echo $this->printBinary($test).PHP_EOL;
-		#echo $this->printBinary(substr($this->slow,7,9)).PHP_EOL;
-		#echo $this->printBinary($this->getSlot(1,$this->r,$this->slow)).PHP_EOL;
-		#echo $this->printBinary($test).PHP_EOL;
-		for ($i = 0; $i < $this->slots; $i++){
-			echo $i.'	'.($this->add($i) ? 'A' : 'E').PHP_EOL;
-			#if ($i > $this->slots - 3){
-				#for ($j = 0; $j < $this->slots; $j++) echo $this->printBinary($this->getFingerprint($j),$this->q).' ';
-				#echo PHP_EOL;
-				#for ($j = 0; $j < $this->slots; $j++) echo $this->printInteger($this->getRemainder($j),strlen(pow(2,$this->r) - 1)).' ';
-				#echo PHP_EOL;
-				#echo $this->printBinary(substr($this->fast,0,3));
-				#echo PHP_EOL.PHP_EOL;
-			#}
-		}
-		echo PHP_EOL;
-		for ($i = 0; $i < $this->slots * 2; $i++){
-			echo $i.'	'.($this->contains($i) ? 'Yes' : 'No').PHP_EOL;
-		}
-	}
+	
 	private function printBinary($key,$length = 0){
 		if (is_int($key)){
 			$array = [];
@@ -347,8 +309,5 @@ class QuotientFilter implements iAMQ {
 		}
 	}
 }
-
-$qf = new QuotientFilter(6,63);
-$qf->test();
 
 ?>
