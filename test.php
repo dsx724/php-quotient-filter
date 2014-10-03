@@ -7,10 +7,10 @@ $config = parse_ini_file('test.ini',true);
 foreach ($config['php'] as $key => $value) ini_set($key,$value);
 foreach ($config['test']['include'] as $include) require_once $include;
 
-echo '<pre>';
+echo '<pre>'.PHP_EOL;
 
 
-$qf = new QuotientFilter(30,4);
+$qf = new QuotientFilter(20,4);
 $t1 = microtime(true);
 $elements = $qf->slots / 4;
 for ($i = 1; $i < $elements; $i++){
